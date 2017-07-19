@@ -28,6 +28,8 @@
 
 #include "core/logger.hpp"
 
+#include <boost/algorithm/string.hpp>
+
 namespace nfd {
 namespace fw {
 namespace asf {
@@ -42,19 +44,73 @@ AsfStrategy::AsfStrategy(Forwarder& forwarder, const Name& name)
   : Strategy(forwarder)
   , m_measurements(getMeasurements())
   , m_probing(m_measurements)
+  , m_nSilentTimeouts(0)
   , m_retxSuppression(RETX_SUPPRESSION_INITIAL,
                       RetxSuppressionExponential::DEFAULT_MULTIPLIER,
                       RETX_SUPPRESSION_MAX)
 {
   ParsedInstanceName parsed = parseInstanceName(name);
   if (!parsed.parameters.empty()) {
-    BOOST_THROW_EXCEPTION(std::invalid_argument("AsfStrategy does not accept parameters"));
+    std::string error("AsfStrategy takes upto two parameters "
+                      "probing-interval=30s:n-silent-timeouts=5\n"
+                      "min probing-interval=10s");
+    std::map<std::string, std::string> paramMap;
+
+    getParams(parsed.parameters, paramMap, error);
+    for (const auto& elem : paramMap) {
+      // s must be there in the input
+      if (elem.first == "probing-interval" && elem.second.find("s") != std::string::npos) {
+        std::string sec = elem.second;
+        boost::replace_all(sec, "s", "");
+        try {
+          m_probing.setProbingInterval(boost::lexical_cast<int>(sec));
+          NFD_LOG_DEBUG("probing interval set to: " << sec);
+        }
+        catch (const std::exception& e) {
+          BOOST_THROW_EXCEPTION(std::invalid_argument(error));
+        }
+      }
+      else if (elem.first == "n-silent-timeouts") {
+        try {
+          m_nSilentTimeouts = boost::lexical_cast<int>(elem.second);
+          NFD_LOG_DEBUG("number of silent timeouts set to: " << m_nSilentTimeouts);
+        }
+        catch (const std::exception& e) {
+          BOOST_THROW_EXCEPTION(std::invalid_argument(error));
+        }
+      }
+      else {
+        BOOST_THROW_EXCEPTION(std::invalid_argument(error));
+      }
+    }
   }
   if (parsed.version && *parsed.version != getStrategyName()[-1].toVersion()) {
     BOOST_THROW_EXCEPTION(std::invalid_argument(
       "AsfStrategy does not support version " + std::to_string(*parsed.version)));
   }
   this->setInstanceName(makeInstanceName(name, getStrategyName()));
+}
+
+void
+AsfStrategy::getParams(const PartialName parsed, std::map<std::string, std::string>& paramMap,
+                       std::string error)
+{
+  std::string parsedStr = parsed.get(0).toUri();
+
+  boost::replace_all(parsedStr, "%3D", "=");
+  boost::replace_all(parsedStr, "%3A", ":");  // %3A is :, I didn't use %3B i.e. ; because bash uses ;
+
+  try {
+    std::vector<std::string> options, mapped;
+    boost::split(options, parsedStr, boost::is_any_of(":"));
+
+    for (const std::string& o: options) {
+      boost::split(mapped, o,  boost::is_any_of("="));
+      paramMap[mapped.at(0)] = mapped.at(1);
+    }
+  } catch (const std::exception& e) {
+    BOOST_THROW_EXCEPTION(std::invalid_argument(error));
+  }
 }
 
 const Name&
@@ -144,7 +200,7 @@ AsfStrategy::afterReceiveNack(const Face& inFace, const lp::Nack& nack,
                               const shared_ptr<pit::Entry>& pitEntry)
 {
   NFD_LOG_DEBUG("Nack for " << nack.getInterest() << " from=" << inFace.getId() << ": " << nack.getReason());
-  onTimeout(pitEntry->getName(), inFace.getId());
+  onTimeout(pitEntry->getName(), inFace);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -184,7 +240,7 @@ AsfStrategy::forwardInterest(const Interest& interest,
                                             << " in " << time::duration_cast<time::milliseconds>(timeout) << " ms");
 
     scheduler::EventId id = scheduler::schedule(timeout,
-        bind(&AsfStrategy::onTimeout, this, interest.getName(), outFace.getId()));
+        bind(&AsfStrategy::onTimeout, this, interest.getName(), std::ref(outFace)));
 
     faceInfo.setTimeoutEvent(id, interest.getName());
   }
@@ -278,9 +334,9 @@ AsfStrategy::getBestFaceForForwarding(const fib::Entry& fibEntry, const Interest
 }
 
 void
-AsfStrategy::onTimeout(const Name& interestName, face::FaceId faceId)
+AsfStrategy::onTimeout(const Name& interestName, const Face& face)
 {
-  NFD_LOG_TRACE("FaceId: " << faceId << " for " << interestName << " has timed-out");
+  face::FaceId faceId = face.getId();
 
   NamespaceInfo* namespaceInfo = m_measurements.getNamespaceInfo(interestName);
 
@@ -296,7 +352,23 @@ AsfStrategy::onTimeout(const Name& interestName, face::FaceId faceId)
   }
 
   FaceInfo& faceInfo = it->second;
-  faceInfo.recordTimeout(interestName);
+
+  faceInfo.setNumSilentTimeouts(faceInfo.getNumSilentTimeouts()+1);
+
+  if (faceInfo.getNumSilentTimeouts() <= m_nSilentTimeouts) {
+    NFD_LOG_TRACE("FaceId: " << faceId << " for " << interestName << " has timed-out ("
+                  << faceInfo.getNumSilentTimeouts() << " time, ignoring)");
+    // Extend lifetime for measurements associated with Face
+    namespaceInfo->extendFaceInfoLifetime(faceInfo, face);
+
+    if (faceInfo.isTimeoutScheduled()) {
+      faceInfo.cancelTimeoutEvent(interestName);
+    }
+  }
+  else {
+    NFD_LOG_TRACE("FaceId: " << faceId << " for " << interestName << " has timed-out");
+    faceInfo.recordTimeout(interestName);
+  }
 }
 
 void

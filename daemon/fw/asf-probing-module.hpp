@@ -55,6 +55,9 @@ public:
   void
   afterForwardingProbe(const fib::Entry& fibEntry, const Interest& interest);
 
+  void
+  setProbingInterval(int probingInterval);
+
 private:
   // Used to associate FaceInfo with the face in a NextHop
   typedef std::pair<FaceInfo*, Face*> FaceInfoFacePair;

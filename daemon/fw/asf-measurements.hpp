@@ -166,6 +166,20 @@ public:
     return getSrtt() != RttStats::RTT_NO_MEASUREMENT;
   }
 
+  int
+  getNumSilentTimeouts() const
+  {
+    return m_nSilentTimeouts;
+  }
+
+  void
+  setNumSilentTimeouts(int nSilentTimeouts)
+  {
+    if (nSilentTimeouts >= 0) {
+      m_nSilentTimeouts = nSilentTimeouts;
+    }
+  }
+
 private:
   void
   cancelTimeoutEvent();
@@ -183,6 +197,7 @@ private:
   // RTO associated with Interest
   scheduler::EventId m_timeoutEventId;
   bool m_isTimeoutScheduled;
+  int m_nSilentTimeouts;
 };
 
 typedef std::unordered_map<face::FaceId, FaceInfo> FaceInfoTable;

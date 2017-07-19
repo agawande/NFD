@@ -75,14 +75,18 @@ private:
   getBestFaceForForwarding(const fib::Entry& fibEntry, const Interest& interest, const Face& inFace);
 
   void
-  onTimeout(const Name& interestName, face::FaceId faceId);
+  onTimeout(const Name& interestName, const Face& face);
 
   void
   sendNoRouteNack(const Face& inFace, const Interest& interest, const shared_ptr<pit::Entry>& pitEntry);
 
+  void
+  getParams(const PartialName parsed, std::map<std::string, std::string>& paramMap, std::string error);
+
 private:
   AsfMeasurements m_measurements;
   ProbingModule m_probing;
+  int m_nSilentTimeouts;
 
 private:
   RetxSuppressionExponential m_retxSuppression;

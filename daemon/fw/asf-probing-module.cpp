@@ -189,6 +189,14 @@ ProbingModule::getRandomNumber(double start, double end)
   return dist(getGlobalRng());
 }
 
+void
+ProbingModule::setProbingInterval(int probingInterval)
+{
+  if (probingInterval >= 10) {
+    m_probingInterval = time::seconds(probingInterval);
+  }
+}
+
 } // namespace asf
 } // namespace fw
 } // namespace nfd

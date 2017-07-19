@@ -66,6 +66,7 @@ RttStats::computeSrtt(Rtt previousSrtt, Rtt currentRtt)
 
 FaceInfo::FaceInfo()
   : m_isTimeoutScheduled(false)
+  , m_nSilentTimeouts(0)
 {
 }
 
